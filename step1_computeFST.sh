@@ -4,15 +4,14 @@ module load StdEnv/2023
 module load bcftools
 module load vcftools
 
-# =========================================================
-# Parameters
-# =========================================================
-
+# -----------------------------
+# Paramètres
+# -----------------------------
 VCF_3D="renamed_3D_forFST.vcf"
 VCF_LITT="renamed_litt_forFST.vcf"
 
 NBOOT=1000
-OUTDIR="FST_K7_DAPC_majo"
+OUTDIR="FST_windowed_v2"
 
 WINDOW_SMALL=100000
 WINDOW_LARGE=1000000000
@@ -21,29 +20,22 @@ SEED=420
 
 mkdir -p ${OUTDIR}
 
-
-# =========================================================
-# Reproducible subsampling
-# =========================================================
-
+# -----------------------------
+# Subsampling reproductible
+# -----------------------------
 subsample_file() {
-
     infile=$1
     n=$2
     seed=$3
     outfile=$4
 
-    shuf --random-source=<(yes ${seed}) ${infile} \
-        | head -n ${n} > ${outfile}
+    shuf --random-source=<(yes ${seed}) ${infile} | head -n ${n} > ${outfile}
 }
 
-
-# =========================================================
-# Compute FST
-# =========================================================
-
+# -----------------------------
+# FST computation
+# -----------------------------
 compute_fst() {
-
     vcf=$1
     file1=$2
     file2=$3
@@ -52,157 +44,111 @@ compute_fst() {
 
     prefix=${OUTDIR}/${label}_rep${rep}
 
-
-    # 100 kb windows
     vcftools \
         --vcf ${vcf} \
         --weir-fst-pop ${file1} \
         --weir-fst-pop ${file2} \
         --fst-window-size ${WINDOW_SMALL} \
-        --out ${prefix}_100kb \
-        > /dev/null 2>&1
+        --out ${prefix}_100kb > /dev/null 2>&1
 
-
-    # Whole chromosome FST
     vcftools \
         --vcf ${vcf} \
         --weir-fst-pop ${file1} \
         --weir-fst-pop ${file2} \
         --fst-window-size ${WINDOW_LARGE} \
-        --out ${prefix}_chrom \
-        > /dev/null 2>&1
+        --out ${prefix}_chrom > /dev/null 2>&1
 }
 
-
-# =========================================================
-# Pairwise FST with equal sample size
-# =========================================================
-
+# -----------------------------
+# Pairwise avec nmin global
+# -----------------------------
 run_pairwise() {
-
     vcf=$1
     pop1=$2
     pop2=$3
     label=$4
     nmin=$5
 
-
     echo "Running ${label} with n=${nmin}"
-
 
     for ((rep=1; rep<=NBOOT; rep++))
     do
-
         sub1="tmp_${label}_${rep}_1.txt"
         sub2="tmp_${label}_${rep}_2.txt"
 
-
-        # Reproducible but different seed for each replicate
+        # seed différent par réplication pour diversité mais reproductible
         seed_rep=$((SEED + rep))
 
+        subsample_file ${pop1} ${nmin} ${seed_rep} ${sub1}
+        subsample_file ${pop2} ${nmin} ${seed_rep} ${sub2}
 
-        subsample_file \
-            ${pop1} \
-            ${nmin} \
-            ${seed_rep} \
-            ${sub1}
-
-
-        subsample_file \
-            ${pop2} \
-            ${nmin} \
-            ${seed_rep} \
-            ${sub2}
-
-
-        compute_fst \
-            ${vcf} \
-            ${sub1} \
-            ${sub2} \
-            ${label} \
-            ${rep}
-
+        compute_fst ${vcf} ${sub1} ${sub2} ${label} ${rep}
 
         rm ${sub1} ${sub2}
-
     done
 }
 
+# -----------------------------
+# MAIN LOOP
+# -----------------------------
 
-# =========================================================
-# Main analysis
-# Only DAPC K7 majority clusters
-# =========================================================
+datasets=("3d" "litt")
+thresholds=("pur" "majo")
+Ks=("2" "3" "4" "7")
 
-VCF=${VCF_LITT}
-
-files=(litt_K7_cluster*_majo_DAPC.txt)
-
-
-if [ ${#files[@]} -lt 2 ]; then
-
-    echo "Not enough clusters found"
-    exit 1
-
-fi
-
-
-echo "Processing litt K7 DAPC majority clusters"
-
-
-# =========================================================
-# Determine minimum cluster size
-# =========================================================
-
-nmin_global=999999
-
-
-for f in "${files[@]}"
+for dataset in "${datasets[@]}"
 do
-
-    n=$(wc -l < ${f})
-
-
-    if [ ${n} -lt ${nmin_global} ]; then
-
-        nmin_global=${n}
-
+    if [ "$dataset" == "3d" ]; then
+        VCF=${VCF_3D}
+    else
+        VCF=${VCF_LITT}
     fi
 
-done
-
-
-echo "Global nmin = ${nmin_global}"
-
-
-# =========================================================
-# Pairwise comparisons
-# =========================================================
-
-for ((i=0; i<${#files[@]}; i++))
-do
-
-    for ((j=i+1; j<${#files[@]}; j++))
+    for K in "${Ks[@]}"
     do
+        for th in "${thresholds[@]}"
+        do
+            files=(${dataset}_K${K}_cluster*_${th}.txt)
 
-        f1=${files[$i]}
-        f2=${files[$j]}
+            if [ ${#files[@]} -lt 2 ]; then
+                continue
+            fi
 
+            echo "Processing ${dataset} | K${K} | ${th}"
 
-        name1=$(basename ${f1} .txt)
-        name2=$(basename ${f2} .txt)
+            # -----------------------------
+            # Calcul nmin GLOBAL
+            # -----------------------------
+            nmin_global=999999
 
+            for f in "${files[@]}"
+            do
+                n=$(wc -l < ${f})
+                if [ $n -lt $nmin_global ]; then
+                    nmin_global=$n
+                fi
+            done
 
-        label="${name1}_VS_${name2}"
+            echo "Global nmin for ${dataset} K${K} ${th} = ${nmin_global}"
 
+            # -----------------------------
+            # Comparaisons pairwise
+            # -----------------------------
+            for ((i=0; i<${#files[@]}; i++))
+            do
+                for ((j=i+1; j<${#files[@]}; j++))
+                do
+                    f1=${files[$i]}
+                    f2=${files[$j]}
 
-        run_pairwise \
-            ${VCF} \
-            ${f1} \
-            ${f2} \
-            ${label} \
-            ${nmin_global}
+                    name1=$(basename ${f1} .txt)
+                    name2=$(basename ${f2} .txt)
 
+                    label="${name1}_VS_${name2}"
+
+                    run_pairwise ${VCF} ${f1} ${f2} ${label} ${nmin_global}
+                done
+            done
+        done
     done
-
 done
