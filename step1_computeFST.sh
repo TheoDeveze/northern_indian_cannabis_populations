@@ -4,9 +4,6 @@ module load StdEnv/2023
 module load bcftools
 module load vcftools
 
-# -----------------------------
-# Paramètres
-# -----------------------------
 VCF_3D="renamed_3D_forFST.vcf"
 VCF_LITT="renamed_litt_forFST.vcf"
 
@@ -20,9 +17,8 @@ SEED=420
 
 mkdir -p ${OUTDIR}
 
-# -----------------------------
-# Subsampling reproductible
-# -----------------------------
+
+# Subsampling
 subsample_file() {
     infile=$1
     n=$2
@@ -32,9 +28,8 @@ subsample_file() {
     shuf --random-source=<(yes ${seed}) ${infile} | head -n ${n} > ${outfile}
 }
 
-# -----------------------------
-# FST computation
-# -----------------------------
+
+# FST
 compute_fst() {
     vcf=$1
     file1=$2
@@ -59,9 +54,7 @@ compute_fst() {
         --out ${prefix}_chrom > /dev/null 2>&1
 }
 
-# -----------------------------
-# Pairwise avec nmin global
-# -----------------------------
+# Pairwise global nmin
 run_pairwise() {
     vcf=$1
     pop1=$2
@@ -76,7 +69,7 @@ run_pairwise() {
         sub1="tmp_${label}_${rep}_1.txt"
         sub2="tmp_${label}_${rep}_2.txt"
 
-        # seed différent par réplication pour diversité mais reproductible
+        # change seed
         seed_rep=$((SEED + rep))
 
         subsample_file ${pop1} ${nmin} ${seed_rep} ${sub1}
@@ -88,9 +81,6 @@ run_pairwise() {
     done
 }
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
 
 datasets=("3d" "litt")
 thresholds=("pur" "majo")
@@ -131,9 +121,7 @@ do
 
             echo "Global nmin for ${dataset} K${K} ${th} = ${nmin_global}"
 
-            # -----------------------------
-            # Comparaisons pairwise
-            # -----------------------------
+            # Compare pairwise
             for ((i=0; i<${#files[@]}; i++))
             do
                 for ((j=i+1; j<${#files[@]}; j++))
